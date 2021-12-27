@@ -7,8 +7,21 @@ import tempfile
 import joblib
 import click
 import multiprocessing
+import gzip
 
 """
+#version 0.3 Date: 2021.05.20
+support gzip inseq
+#version 0.2 Date: 2021.04.01
+orignal flep-seq:
+    primer_5p = "AAGCAGTGGTATCAACGCAGAGTACATGGG"
+    primer_3p = "AAGCAGTGGTATCAACGCAGAGTACATTGATGGTGCCTACAG"
+new flep-seq using SQK-PCB109
+    primer_5p = "TTTCTGTTGGTGCTGATATTGCT"
+    primer_3p = "ACTTGCCTGTCGCTCTATCTTCATTGATGGTGCCTACAG"
+
+#version 0.1 Data : August 29, 2020
+
 Data : August 29, 2020
 
 Author: Jia Jinbu
@@ -22,8 +35,9 @@ see more by --help.
 @click.option('-s', '--inseq', help='Input read fasta file', 
                     required=True, type=click.Path(exists=True))                    
 @click.option('-o', '--out', help='Output adapter information of each read', required=True)
+@click.option('-m', '--mode', required=False, default=0, help='sequence method: 0: original flep-seq. 1: SQK-PCB109-flepseq')
 @click.option('-t', '--threads', required=False, default=10, help='Number of threads to use. (default: 10)')
-def main(inbam, inseq, out, threads):
+def main(inbam, inseq, out, mode, threads):
     """
     \b
     Require: pysam, joblib pacage
@@ -103,16 +117,28 @@ def main(inbam, inseq, out, threads):
     if threads > max_threads:
         max_threads = max_threads
     
-    pad_length = 20
-    min_primer_align_length = 15
-    primer_r_max_start1 = 8
-    primer_r_max_start2 = 12
-    primer_f_max_start = 1
-    match = 1
-    mis = -1.5
-    primer_5p = "AAGCAGTGGTATCAACGCAGAGTACATGGG"
-    primer_3p = "AAGCAGTGGTATCAACGCAGAGTACATTGATGGTGCCTACAG"
-        
+    #match and mis paramter are not used for now.
+    if mode == 0:
+        primer_5p = "AAGCAGTGGTATCAACGCAGAGTACATGGG"
+        primer_3p = "AAGCAGTGGTATCAACGCAGAGTACATTGATGGTGCCTACAG"
+        pad_length = 20
+        min_primer_align_length = 15
+        primer_r_max_start1 = 8
+        primer_r_max_start2 = 12
+        primer_f_max_start = 1
+        match = 1
+        mis = -1.5
+    elif mode == 1:
+        primer_5p = "TTTCTGTTGGTGCTGATATTGCT"
+        primer_3p = "ACTTGCCTGTCGCTCTATCTTCATTGATGGTGCCTACAG"
+        pad_length = 20
+        min_primer_align_length = 15
+        primer_r_max_start1 = len(primer_3p) - min_primer_align_length + 1
+        primer_r_max_start2 = len(primer_3p) - min_primer_align_length + 1
+        primer_f_max_start = len(primer_5p) - min_primer_align_length + 1
+        match = 1
+        mis = -1.5
+                    
     seq_lists = extract_bam_clip_fasta_seq_split(inbam, inseq, split=threads)
     threads = len(seq_lists)
     
@@ -206,15 +232,24 @@ def read_fasta_to_dict(filein):
     id2seq = {}
     
     seq_id, seq = "", ""
-    for line_num, l in enumerate(open(filein)):
-        l = l.strip()
-        if l.startswith(">"):
-            if seq_id:
-                id2seq[seq_id] = seq
-            seq = ""
-            seq_id = l[1:].split()[0]
-        else:
-            seq += l
+    if filein.endswith(".gz"):
+        IN = gzip.open(filein, 'rt')
+    else:
+        IN = open(filein)
+    try:
+        for line_num, l in enumerate(IN):
+            l = l.strip()
+            if l.startswith(">"):
+                if seq_id:
+                    id2seq[seq_id] = seq
+                seq = ""
+                seq_id = l[1:].split()[0]
+            else:
+                seq += l
+    except:
+        raise
+    finally:
+        IN.close()
     if seq_id:
         id2seq[seq_id] = seq
         

@@ -3,8 +3,12 @@ from collections import Counter
 import pysam
 import math
 import click
+import numpy as np
 
 """
+version 0.2 
+Jia Jinbu, 2022.04.03
+version 0.1
 Jia Jinbu, 2020.09.15.
 
 Extract polyA position from PacBio ccs seqeunce without adapters and has the same strand with mRNA.
@@ -15,36 +19,136 @@ Extract polyA position from PacBio ccs seqeunce without adapters and has the sam
                     required=True, type=click.Path(exists=True))
 @click.option('-s', '--inseq', help='Input fasta seqeunce used for minimap22', required=True)
 @click.option('-o', '--out', help='Out poly results. Remove chimerical reads.', required=True)
-def main(inbam, inseq, out):
+@click.option('-p', '--padlength', help='PAD_LENGTH', default=20)
+@click.option('-m', '--method', help='How to extend to genome alinment region. [1] find seed in unmapped region containg upstream genome alignment region with PAD_LENGTH. [2] find seed in unmapped region and extend seed to upstream genome region', default=2)
+def main(inbam, inseq, out, padlength, method):
     """
     Extract polyA position from PacBio ccs seqeunce without adapters and has the same strand with mRNA.
     """
     SEP = ","
-    PAD_LENGTH = 20
+    PAD_LENGTH = padlength #20
     MATCH_SCORE = 1
     MISMATCH_SCORE = -1.5
 
     with open(out, 'w') as o:
-        o.write('read_core_id\tpolya_start_base\tpolya_end_base\tpolya_length\tpolya_score\n')
-        for read, (read_strand, seq_length, read_name, left_name, left_clip_seq, right_name, right_clip_seq) in iter_bam_clip_seq(inbam, inseq, PAD_LENGTH):
-            #read_length = read.infer_read_length()
-            seq = left_clip_seq if read_strand == "-" else right_clip_seq
-            polyA_start, polyA_end, polyA_score, polyA_seq = polyA_finder(seq, match = MATCH_SCORE, mis = MISMATCH_SCORE)
-            if polyA_start == 0: #0 indicate not find polyA
-                polyA_length = 0
-                read_polyA_end = 0
-                read_polyA_start = 0
-                #read_polyA_start = ""
-                #after_polyA_seq = ""
+        #defaut 2
+        if method == 1:
+            o.write('read_core_id\tpolya_start_base\tpolya_end_base\tpolya_length\tpolya_score\n')
+            for read, (read_strand, seq_length, read_name, left_name, left_clip_seq, right_name, right_clip_seq) in iter_bam_clip_seq(inbam, inseq, PAD_LENGTH):
+                #read_length = read.infer_read_length()
+                seq = left_clip_seq if read_strand == "-" else right_clip_seq
+                polyA_start, polyA_end, polyA_score, polyA_seq = polyA_finder(seq, match = MATCH_SCORE, mis = MISMATCH_SCORE)
+                if polyA_start == 0: #0 indicate not find polyA
+                    polyA_length = 0
+                    read_polyA_end = 0
+                    read_polyA_start = 0
+                    #read_polyA_start = ""
+                    #after_polyA_seq = ""
+                else:
+                    polyA_length = polyA_end - polyA_start + 1
+                    #read_polyA_start = seq[:polyA_start]
+                    #after_polyA_seq = seq[polyA_end:]
+                    read_polyA_end = seq_length - len(seq) + polyA_end
+                    read_polyA_start = seq_length - len(seq) + polyA_start
+                read_core_id = ",".join(read_name.split(",")[:4])
+                o.write(f'{read_core_id}\t{read_polyA_start}\t{read_polyA_end}\t{polyA_length}\t{polyA_score}\n')
+        elif method == 2:
+            o.write('read_core_id\tread_length\talign_end\tpolya_start_base\tpolya_end_base\tpolya_length\tpolya_score\tpolyA_seq\tpolya_upstream_seq\tno_mis_extend_length\textend_mis\tpolyA_down_seq\n')
+            for read, (read_strand, seq_length, read_name, left_name, left_clip_seq, right_name, right_clip_seq) in iter_bam_clip_seq(inbam, inseq, PAD_LENGTH):
+                #read_length = read.infer_read_length()
+                seq = left_clip_seq if read_strand == "-" else right_clip_seq
+                polyA_start, polyA_end, polyA_score, polyA_seq, no_mis_other_seq, no_mis_extend_length, extend_mis, polyA_down_seq = extend_up_polyA_finder(seq, pad_length=PAD_LENGTH, base="A", match = 1, mis = -1.5)
+                read_align_end = seq_length - len(seq) + PAD_LENGTH
+                if polyA_start == 0: #0 indicate not find polyA
+                    polyA_length = 0
+                    read_polyA_end = 0
+                    read_polyA_start = 0
+                    #read_polyA_start = ""
+                    #after_polyA_seq = ""
+                else:
+                    polyA_length = polyA_end - polyA_start + 1
+                    #read_polyA_start = seq[:polyA_start]
+                    #after_polyA_seq = seq[polyA_end:]
+                    read_polyA_end = seq_length - len(seq) + polyA_end
+                    read_polyA_start = seq_length - len(seq) + polyA_start
+                read_core_id = ",".join(read_name.split(",")[:4])
+                o.write(f'{read_core_id}\t{seq_length}\t{read_align_end}\t{read_polyA_start}\t{read_polyA_end}\t{polyA_length}\t{polyA_score}\t{polyA_seq}\t{no_mis_other_seq}\t{no_mis_extend_length}\t{extend_mis}\t{polyA_down_seq}\n')
+
+def extend_seq_func(seq="", base="A", down_direction=True, no_mismatch=True):
+    MATCH_SCORE = 1
+    MISMATCH_SCORE = -1.5
+    scores = []
+    score = 0
+    if down_direction:
+        find_seq = seq
+    else:
+        find_seq = seq[::-1]
+    
+    if no_mismatch:
+        max_score_index = -1
+        for s in find_seq:
+            if s != base:
+                break
+            max_score_index += 1
+        max_score = max_score_index + 1
+    else:
+        for s in find_seq:
+            if s == base:
+                score += MATCH_SCORE
             else:
-                polyA_length = polyA_end - polyA_start + 1
-                #read_polyA_start = seq[:polyA_start]
-                #after_polyA_seq = seq[polyA_end:]
-                read_polyA_end = seq_length - len(seq) + polyA_end
-                read_polyA_start = seq_length - len(seq) + polyA_start
-            read_core_id = ",".join(read_name.split(",")[:4])
-            o.write(f'{read_core_id}\t{read_polyA_start}\t{read_polyA_end}\t{polyA_length}\t{polyA_score}\n')
-            
+                score += MISMATCH_SCORE
+            scores.append(score)
+        max_score_index = np.argmax(scores)
+        max_score = scores[max_score_index]
+        
+    if max_score <= 0:
+        extend_seq = ""
+        other_seq = seq
+        max_score = 0
+        extend_length = 0
+    else:
+        if down_direction:
+            extend_seq = seq[:(max_score_index+1)]
+            other_seq = seq[(max_score_index+1):]
+            max_score = max_score
+            extend_length = len(extend_seq)
+        else:
+            max_score_index = len(seq) - 1 - max_score_index
+            extend_seq = seq[max_score_index:]
+            other_seq = seq[:max_score_index]
+            max_score = max_score
+            extend_length = len(extend_seq)
+    return [extend_seq, other_seq, max_score, extend_length]
+
+def extend_up_polyA_finder(seq, pad_length=20,base="A", match = 1, mis = -1.5):
+    polyA_start, polyA_end, polyA_score, polyA_seq = polyA_finder(seq[pad_length:], match = match, mis = mis)
+    if polyA_start != 0:
+        polyA_start += pad_length
+        polyA_end += pad_length
+    if pad_length:
+        if (polyA_score == 0) or (polyA_start == 1 + pad_length): #polyA_start may be == 0 if not find polyA
+            no_mis_extend_seq, no_mis_other_seq, no_mis_max_score, no_mis_extend_length = extend_seq_func(seq[:pad_length], down_direction=False)
+            extend_seq, other_seq, max_score, extend_length = extend_seq_func(seq[:pad_length], down_direction=False, no_mismatch=False)
+            if no_mis_extend_seq:
+                polyA_start = len(no_mis_other_seq) + 1
+                if polyA_score == 0: # not find polyA before
+                    polyA_end = polyA_start + len(no_mis_extend_seq) - 1
+                polyA_seq = no_mis_extend_seq + polyA_seq
+                polyA_score += max_score
+            if extend_seq != no_mis_extend_seq:
+                extend_mis = extend_seq[:(len(extend_seq) - len(no_mis_extend_seq))]
+            else:
+                extend_mis = ""
+        else:
+            no_mis_other_seq, no_mis_extend_length, extend_mis = "", 0, ""
+    else:
+        no_mis_other_seq, no_mis_extend_length, extend_mis = "", 0, ""   
+    if polyA_score != 0:
+        polyA_down_seq = seq[polyA_end:]
+    else:
+        polyA_down_seq = ""
+    return [polyA_start, polyA_end, polyA_score, polyA_seq, no_mis_other_seq, no_mis_extend_length, extend_mis, polyA_down_seq]
+
 def read_fasta_to_dict(filein):
     """
     !!!The function in included in both adapterFinder.py and 
@@ -203,7 +307,6 @@ def iter_bam_clip_seq(filein_bam, filein_seq, pad_length=20):
             right_clip_length = 0
         left_clip_length += pad_length
         right_clip_length += pad_length
-    
         seq = read.query_sequence
         if left_clip_type == 5 or right_clip_type == 5:
             #if Hard clip, need origin_seqs to extract origin seq
@@ -212,11 +315,14 @@ def iter_bam_clip_seq(filein_bam, filein_seq, pad_length=20):
             seq = origin_seqs[read.query_name]
             if read_strand == "-": seq = revcom(seq)
         seq_length = len(seq)
-
+        
         left_clip_seq = seq[:left_clip_length]
         left_clip_seq = revcom(left_clip_seq)
-        right_clip_seq = seq[(-right_clip_length):]
-    
+        if right_clip_length:
+            right_clip_seq = seq[(-right_clip_length):]
+        else:
+            right_clip_seq = ""
+        
         read_name = ",".join([read.query_name, 
                               read.reference_name,
                               str(read.reference_start + 1), 
@@ -284,9 +390,12 @@ def polyA_finder(seq, base="A", match = 1, mis = -1.5):
     If you want to modify one of them, please modify them at the 
     same time.
     """
-    scores = [match if base == s else mis for s in seq]
-    start_index, end_index, max_score = max_subarray(scores)
-    return (start_index+1, end_index+1, max_score, seq[start_index:(end_index+1)])
+    if seq:
+        scores = [match if base == s else mis for s in seq]
+        start_index, end_index, max_score = max_subarray(scores)
+        return (start_index+1, end_index+1, max_score, seq[start_index:(end_index+1)])
+    else:
+        return (0, 0, 0, "")
             
 if __name__ == "__main__":
     main()

@@ -12,7 +12,6 @@ import pickle
 import gzip
 import subprocess
 import time
-import PolyAcaller
 
 """
 version 0.6.2 2021.07.27
@@ -122,7 +121,7 @@ def main(inadapter, fast5pos, summary, fast5dir, out, threads, basecall_group, r
     
     """
     fast5_to_reads = read_adapter_info(inadapter, fast5pos, summary, fast5dir, raw_fast5dir, file_select_reads)
-    df, all_reads = PolyAcaller.parallel_extract_polya(fast5_to_reads, threads, basecall_group, debug_dir)
+    df, all_reads = parallel_extract_polya(fast5_to_reads, threads, basecall_group, debug_dir)
     #if not use PolyAcaller.parallel_extract_polya, but parallel_extract_polya.
     #it will error when use pickle.dump #local variable 'BasecallPickleRead' referenced before assignment
     df.to_csv(out, sep="\t", index=False)

@@ -1,1 +1,0 @@
-Please download TAIR10 genome from https://www.arabidopsis.org.

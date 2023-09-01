@@ -1,3 +1,37 @@
+This extension of the FLEPSeq framework ensures you can visualize the bedgraph files from different genomic projects such as ChipSeq, 3prime seq, RNAseq etc. within the same framework as used by FLEPSeq to visualize the long read alignments.
+It uses the same gene model approach and the same positions as the FLEPSeq.
+
+example usage: 
+
+```
+i = "AT4G38670"
+igv = IGV(i)
+
+igv.add_bam(nanopore_bam_file1, sort_method='3', label = "Bar")
+igv.add_bam(nanopore_bam_file2, sort_method='3', label = "Foo")
+igv.add_bam(nanopore_bam_file3, sort_method='3', label = "combined Col-0")
+
+
+igv.add_bedgraph(bedgraph1) 
+igv.add_bedgraph(bedgraph2)
+igv.add_bedgraph(bedgraph3)
+igv.add_bedgraph(bedgraph4)
+igv.add_bedgraph(bedgraph5)
+igv.add_bedgraph(bedgraph6)
+igv.add_bedgraph(bedgraph7)
+igv.add_bedgraph(bedgraph8)
+igv.add_bedgraph(bedgraph9)
+    
+igv.plot(height=2.0, width=5.6, height_bedgraph = 1, extend_3_prime_by = 500)
+```
+
+This is the bare minimum framework that works for my purposes but it might not work if you use more or less bedgraphs. No guarantee. 
+Also you can extend the plotting window downstream by setting the "extend_3_prime_by" to the value you need. 
+
+
+
+Old FLEPSeq readme:
+
 # FLEPSeq
 The analysis pipeline for FLEP-seq
 
